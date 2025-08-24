@@ -56,8 +56,8 @@ void GetBoxNodeData(const in float i, inout vec4 boxNodeData0, inout vec4 boxNod
 	ivec2 uv0 = ivec2( mod(ix2 + 0.0, 2048.0), (ix2 + 0.0) * INV_TEXTURE_WIDTH ); // data0
 	ivec2 uv1 = ivec2( mod(ix2 + 1.0, 2048.0), (ix2 + 1.0) * INV_TEXTURE_WIDTH ); // data1
 	
-	boxNodeData0 = texelFetch(tAABBTexture, uv0, 0);
-	boxNodeData1 = texelFetch(tAABBTexture, uv1, 0);
+	boxNodeData0 = texelFetch(tAABBTexture, uv0, 0);	//节点id 包围盒min
+	boxNodeData1 = texelFetch(tAABBTexture, uv1, 0);	//右孩子节点id， 包围盒max
 }
 
 
@@ -99,28 +99,32 @@ float SceneIntersect( )
 	// glTF
 	///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	//根据节点索引，从纹理中获取包围盒数据
 	GetBoxNodeData(stackptr, currentBoxNodeData0, currentBoxNodeData1);
+	//先与节点的包围盒碰撞
 	currentStackData = vec2(stackptr, BoundingBoxIntersect(currentBoxNodeData0.yzw, currentBoxNodeData1.yzw, rayOrigin, inverseDir));
 	stackLevels[0] = currentStackData;
+	//如果返回了有效的碰撞距离
 	skip = (currentStackData.y < t) ? TRUE : FALSE;
 
-	while (true)
-        {
-		if (skip == FALSE) 
-                {
-                        // decrease pointer by 1 (0.0 is root level, 27.0 is maximum depth)
-                        if (--stackptr < 0.0) // went past the root level, terminate loop
-                                break;
+	while (true){
 
-                        currentStackData = stackLevels[int(stackptr)];
+		if (skip == FALSE) {
+			// decrease pointer by 1 (0.0 is root level, 27.0 is maximum depth)
+			if (--stackptr < 0.0) // went past the root level, terminate loop
+					break;
+
+			currentStackData = stackLevels[int(stackptr)];
 			
 			if (currentStackData.y >= t)
 				continue;
 			
 			GetBoxNodeData(currentStackData.x, currentBoxNodeData0, currentBoxNodeData1);
-                }
-		skip = FALSE; // reset skip
+        }
+
+		skip = FALSE; // reset skip	首先重置为不跳过
 		
+		//这里表示为内部节点
 		if (currentBoxNodeData0.x < 0.0) // // < 0.0 signifies an inner node 
 		{
 			GetBoxNodeData(currentStackData.x + 1.0, nodeAData0, nodeAData1);
@@ -129,6 +133,8 @@ float SceneIntersect( )
 			stackDataB = vec2(currentBoxNodeData1.x, BoundingBoxIntersect(nodeBData0.yzw, nodeBData1.yzw, rayOrigin, inverseDir));
 			
 			// first sort the branch node data so that 'a' is the smallest
+
+			//节点按距离排序，这里始终让stackDataA保持最短距离
 			if (stackDataB.y < stackDataA.y)
 			{
 				tmpStackData = stackDataB;
@@ -140,6 +146,7 @@ float SceneIntersect( )
 				nodeAData0   = tmpNodeData0; nodeAData1   = tmpNodeData1;
 			} // branch 'b' now has the larger rayT value of 'a' and 'b'
 
+			//如果较远的子节点 B 与射线相交且距离小于 t，则把 B 设为当前处理对象并把 skip 置 TRUE（不退栈）。
 			if (stackDataB.y < t) // see if branch 'b' (the larger rayT) needs to be processed
 			{
 				currentStackData = stackDataB;
@@ -147,12 +154,16 @@ float SceneIntersect( )
 				currentBoxNodeData1 = nodeBData1;
 				skip = TRUE; // this will prevent the stackptr from decreasing by 1
 			}
+
+			
 			if (stackDataA.y < t) // see if branch 'a' (the smaller rayT) needs to be processed 
 			{
+				//如果之前已经处理了B
 				if (skip == TRUE) // if larger branch 'b' needed to be processed also,
 					stackLevels[int(stackptr++)] = stackDataB; // cue larger branch 'b' for future round
 							// also, increase pointer by 1
 				
+				//把A设置为处理对象
 				currentStackData = stackDataA;
 				currentBoxNodeData0 = nodeAData0; 
 				currentBoxNodeData1 = nodeAData1;
@@ -179,6 +190,7 @@ float SceneIntersect( )
 
 		d = BVH_TriangleIntersect( vec3(vd0.xyz), vec3(vd0.w, vd1.xy), vec3(vd1.zw, vd2.x), rayOrigin, rayDirection, tu, tv );
 
+		//如果返回了有效的碰撞距离
 		if (d < t)
 		{
 			t = d;
@@ -188,7 +200,7 @@ float SceneIntersect( )
 			triangleLookupNeeded = TRUE;
 		}
 	      
-        } // end while (TRUE)
+    } // end while (TRUE)
 
 
 	if (triangleLookupNeeded == TRUE)
@@ -221,7 +233,7 @@ float SceneIntersect( )
 		hitColor = vd6.yzw;
 		hitOpacity = vd7.y;
 		hitUV = triangleW * vec2(vd4.zw) + triangleU * vec2(vd5.xy) + triangleV * vec2(vd5.zw);
-		hitType = int(vd6.x);
+		hitType = int(vd6.x);	//这里保存物体类型
 		hitAlbedoTextureID = int(vd7.x);
 		hitObjectID = float(objectCount);
 	}
@@ -256,6 +268,7 @@ vec3 Get_HDR_Color(vec3 rayDirection)
 	return texture( tHDRTexture, sampleUV ).rgb;
 }
 
+//计算辐射度
 //-----------------------------------------------------------------------------------------------------------------------------
 vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float objectID, out float pixelSharpness )
 //-----------------------------------------------------------------------------------------------------------------------------
@@ -289,20 +302,23 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 	int reflectionNeedsToBeSharp = FALSE;
 
 
-    	for (int bounces = 0; bounces < 5; bounces++)
+//这里定义每条射线最多弹射5次
+    for (int bounces = 0; bounces < 5; bounces++)
 	{
 		if (isReflectionTime == TRUE)
-			reflectionBounces++;
+			reflectionBounces++;	//弹射次数计数
 
 		previousIntersecType = hitType;
 		previousObjectID = hitObjectID;
 
-		t = SceneIntersect();
+		t = SceneIntersect();	//执行相交
 
-		
+		//这里用于处理射线未命中时的各种后续处理，
+		//如，第一次弹射、之前的漫反射、折射等情况
 		if (t == INFINITY)
 		{
 			// ray hits sky first
+			// 直接从相机射线到达天空
 			if (bounces == 0)
 			{
 				pixelSharpness = 1.0;
@@ -312,6 +328,7 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 			}
 
 			// if ray bounced off of diffuse material and hits sky
+			//如果之前是漫反射材质
 			if (previousIntersecType == DIFF)
 			{
 				if (sampleLight == TRUE)
@@ -394,6 +411,7 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 
 			diffuseCount++;
 
+			//记录此次弹射的衰减系数
 			mask *= hitColor;
 	    		bounceIsSpecular = FALSE;
 
@@ -402,21 +420,27 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 				mask *= 2.0;
 				// this branch gathers color bleeding / caustics from other surfaces hit in the future
 				// choose random Diffuse sample vector
+				//按余弦分布，执行半球面的重要性采样
 				rayDirection = randomCosWeightedDirectionInHemisphere(nl);
-				rayOrigin = x + nl * epsIntersect;
+				rayOrigin = x + nl * epsIntersect;	//这里是把射线起点移出表面，避免自相交
 
 				continue;
 			}
-			
+
+
 			// this branch acts like a traditional shadowRay, checking for direct light from the Sun..
 			// if it has a clear path and hits the Sun on the next bounce, sunlight is gathered, otherwise returns black (shadow)
+			//由于上面已经判断了t == INFINITY的情况，这里表示，射线在下次弹射没有射向天空，表示、
+			//射线被挡住，没有采样到太阳光
+
 			rayDirection = normalize(uSunDirection + (randVec * 0.01));
 			rayOrigin = x + nl * epsIntersect;
 
 			weight = max(0.0, dot(rayDirection, nl));
-			mask *= diffuseCount == 1 ? 2.0 : 1.0;
+			mask *= diffuseCount == 1 ? 2.0 : 1.0;	//第一次弹射时 * 2 用于补偿上面的rand() < 0.5
 			mask *= weight;
 			
+			//
 			sampleLight = TRUE;
 			continue;
 			
@@ -437,9 +461,10 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 		{
 			nc = 1.0; // IOR of Air
 			nt = 1.5; // IOR of common Glass
-			Re = calcFresnelReflectance(rayDirection, n, nc, nt, ratioIoR);
-			Tr = 1.0 - Re;
+			Re = calcFresnelReflectance(rayDirection, n, nc, nt, ratioIoR);	//计算 Fresnel 反射率（反射能量分数）。
+			Tr = 1.0 - Re;	//计算透射率（透射能量分数）。
 
+			//在第一次弹射时（bounces==0）将反射分支保存下来
 			if (bounces == 0)// || (bounces == 1 && hitObjectID != objectID && bounceIsSpecular == TRUE))
 			{
 				reflectionMask = mask * Re;
@@ -449,6 +474,7 @@ vec3 CalculateRadiance( out vec3 objectNormal, out vec3 objectColor, out float o
 				//reflectionNeedsToBeSharp = TRUE;
 			}
 
+			//如果是全反射,直接按镜面反射处理：设置反射方向并 continue（继续追踪反射射线）。
 			if (Re == 1.0)
 			{
 				rayDirection = reflect(rayDirection, nl);
